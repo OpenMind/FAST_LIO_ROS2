@@ -255,6 +255,6 @@ pcl_viewer utlidar_test.pcd
 **Downsample and view** (useful for large maps):
 
 ```bash
-pcl_voxel_grid utlidar_test.pcd utlidar_test_downsampled.pcd -leaf 0.05,0.05,0.05
+pcl_voxel_grid utlidar_test.pcd utlidar_test_downsampled.pcd -leaf 0.1,0.1,0.1
 pcl_viewer utlidar_test_downsampled.pcd
 ```

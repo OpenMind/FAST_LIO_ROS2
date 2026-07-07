@@ -57,6 +57,7 @@
 #include <sensor_msgs/msg/imu.hpp>
 #include <std_srvs/srv/trigger.hpp>
 #include <tf2_ros/transform_broadcaster.h>
+#include <geometry_msgs/msg/pose_stamped.hpp>
 #include <geometry_msgs/msg/transform_stamped.hpp>
 #include <geometry_msgs/msg/vector3.hpp>
 #include <livox_ros_driver2/msg/custom_msg.hpp>
@@ -86,6 +87,7 @@ condition_variable sig_buffer;
 
 string root_dir = ROOT_DIR;
 string map_file_path, lid_topic, imu_topic;
+string pose_topic, pose_topic_type;
 
 double res_mean_last = 0.05, total_residual = 0.0;
 double last_timestamp_lidar = 0, last_timestamp_imu = -1.0;
@@ -98,6 +100,11 @@ bool   point_selected_surf[100000] = {0};
 bool   lidar_pushed, flg_first_scan = true, flg_exit = false, flg_EKF_inited;
 bool   scan_pub_en = false, dense_pub_en = false, scan_body_pub_en = false;
 bool    is_first_lidar = true;
+bool   use_external_pose = false;
+bool   external_pose_ready = false;
+
+Eigen::Quaterniond external_pose_rotation = Eigen::Quaterniond::Identity();
+Eigen::Vector3d external_pose_translation = Eigen::Vector3d::Zero();
 
 vector<vector<int>>  pointSearchInd_surf; 
 vector<BoxPointType> cub_needrm;
@@ -116,6 +123,10 @@ PointCloudXYZI::Ptr normvec(new PointCloudXYZI(100000, 1));
 PointCloudXYZI::Ptr laserCloudOri(new PointCloudXYZI(100000, 1));
 PointCloudXYZI::Ptr corr_normvect(new PointCloudXYZI(100000, 1));
 PointCloudXYZI::Ptr _featsArray;
+PointCloudXYZI::Ptr pcl_wait_pub(new PointCloudXYZI());
+PointCloudXYZI::Ptr pcl_wait_save(new PointCloudXYZI());
+
+rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr g_pub_cloud_registered;
 
 pcl::VoxelGrid<PointType> downSizeFilterSurf;
 pcl::VoxelGrid<PointType> downSizeFilterMap;
@@ -306,6 +317,50 @@ void standard_pcl_cbk(const sensor_msgs::msg::PointCloud2::UniquePtr msg)
     sig_buffer.notify_all();
 }
 
+void external_pose_pcl_cbk(const sensor_msgs::msg::PointCloud2::UniquePtr msg)
+{
+    if (!external_pose_ready)
+    {
+        return;
+    }
+
+    PointCloudXYZI::Ptr ptr(new PointCloudXYZI());
+    p_pre->process(msg, ptr);
+    if (ptr->empty())
+    {
+        return;
+    }
+
+    PointCloudXYZI::Ptr laser_cloud_world(new PointCloudXYZI(ptr->size(), 1));
+    for (size_t i = 0; i < ptr->points.size(); ++i)
+    {
+        const auto &src = ptr->points[i];
+        Eigen::Vector3d point_lidar(src.x, src.y, src.z);
+        Eigen::Vector3d point_body = Lidar_R_wrt_IMU * point_lidar + Lidar_T_wrt_IMU;
+        Eigen::Vector3d point_world = external_pose_rotation * point_body + external_pose_translation;
+
+        auto &dst = laser_cloud_world->points[i];
+        dst = src;
+        dst.x = point_world.x();
+        dst.y = point_world.y();
+        dst.z = point_world.z();
+    }
+
+    mtx_buffer.lock();
+    *pcl_wait_pub += *laser_cloud_world;
+    *pcl_wait_save += *laser_cloud_world;
+    mtx_buffer.unlock();
+
+    if (scan_pub_en && g_pub_cloud_registered)
+    {
+        sensor_msgs::msg::PointCloud2 cloud_msg;
+        pcl::toROSMsg(*laser_cloud_world, cloud_msg);
+        cloud_msg.header.stamp = msg->header.stamp;
+        cloud_msg.header.frame_id = "camera_init";
+        g_pub_cloud_registered->publish(cloud_msg);
+    }
+}
+
 double timediff_lidar_wrt_imu = 0.0;
 bool   timediff_set_flg = false;
 void livox_pcl_cbk(const livox_ros_driver2::msg::CustomMsg::UniquePtr msg) 
@@ -376,6 +431,38 @@ void imu_cbk(const sensor_msgs::msg::Imu::UniquePtr msg_in)
     imu_buffer.push_back(msg);
     mtx_buffer.unlock();
     sig_buffer.notify_all();
+}
+
+void external_pose_odom_cbk(const nav_msgs::msg::Odometry::UniquePtr msg)
+{
+    mtx_buffer.lock();
+    external_pose_translation = Eigen::Vector3d(
+        msg->pose.pose.position.x,
+        msg->pose.pose.position.y,
+        msg->pose.pose.position.z);
+    external_pose_rotation = Eigen::Quaterniond(
+        msg->pose.pose.orientation.w,
+        msg->pose.pose.orientation.x,
+        msg->pose.pose.orientation.y,
+        msg->pose.pose.orientation.z);
+    external_pose_ready = true;
+    mtx_buffer.unlock();
+}
+
+void external_pose_stamped_cbk(const geometry_msgs::msg::PoseStamped::UniquePtr msg)
+{
+    mtx_buffer.lock();
+    external_pose_translation = Eigen::Vector3d(
+        msg->pose.position.x,
+        msg->pose.position.y,
+        msg->pose.position.z);
+    external_pose_rotation = Eigen::Quaterniond(
+        msg->pose.orientation.w,
+        msg->pose.orientation.x,
+        msg->pose.orientation.y,
+        msg->pose.orientation.z);
+    external_pose_ready = true;
+    mtx_buffer.unlock();
 }
 
 double lidar_mean_scantime = 0.0;
@@ -484,8 +571,6 @@ void map_incremental()
     kdtree_incremental_time = omp_get_wtime() - st_time;
 }
 
-PointCloudXYZI::Ptr pcl_wait_pub(new PointCloudXYZI());
-PointCloudXYZI::Ptr pcl_wait_save(new PointCloudXYZI());
 void publish_frame_world(rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pubLaserCloudFull)
 {
     if(scan_pub_en)
@@ -798,6 +883,9 @@ class LaserMappingNode : public rclcpp::Node
 public:
     LaserMappingNode(const rclcpp::NodeOptions& options = rclcpp::NodeOptions()) : Node("laser_mapping", options)
     {
+        this->declare_parameter<bool>("common.use_external_pose", false);
+        this->declare_parameter<string>("common.pose_topic", "/odom");
+        this->declare_parameter<string>("common.pose_topic_type", "odometry");
         this->declare_parameter<bool>("publish.path_en", true);
         this->declare_parameter<bool>("publish.effect_map_en", false);
         this->declare_parameter<bool>("publish.map_en", false);
@@ -844,6 +932,9 @@ public:
         this->get_parameter_or<string>("map_file_path", map_file_path, "");
         this->get_parameter_or<string>("common.lid_topic", lid_topic, "/livox/lidar");
         this->get_parameter_or<string>("common.imu_topic", imu_topic,"/livox/imu");
+        this->get_parameter_or<bool>("common.use_external_pose", use_external_pose, false);
+        this->get_parameter_or<string>("common.pose_topic", pose_topic, "/odom");
+        this->get_parameter_or<string>("common.pose_topic_type", pose_topic_type, "odometry");
         this->get_parameter_or<bool>("common.time_sync_en", time_sync_en, false);
         this->get_parameter_or<double>("common.time_offset_lidar_to_imu", time_diff_lidar_to_imu, 0.0);
         this->get_parameter_or<double>("filter_size_corner",filter_size_corner_min,0.5);
@@ -918,16 +1009,32 @@ public:
             cout << "~~~~"<<ROOT_DIR<<" doesn't exist" << endl;
 
         /*** ROS subscribe initialization ***/
-        if (p_pre->lidar_type == AVIA)
+        if (use_external_pose)
         {
-            sub_pcl_livox_ = this->create_subscription<livox_ros_driver2::msg::CustomMsg>(lid_topic, 20, livox_pcl_cbk);
+            sub_pcl_pc_ = this->create_subscription<sensor_msgs::msg::PointCloud2>(lid_topic, rclcpp::SensorDataQoS(), external_pose_pcl_cbk);
+            if (pose_topic_type == "pose_stamped")
+            {
+                sub_pose_stamped_ = this->create_subscription<geometry_msgs::msg::PoseStamped>(pose_topic, 20, external_pose_stamped_cbk);
+            }
+            else
+            {
+                sub_pose_odom_ = this->create_subscription<nav_msgs::msg::Odometry>(pose_topic, 20, external_pose_odom_cbk);
+            }
         }
         else
         {
-            sub_pcl_pc_ = this->create_subscription<sensor_msgs::msg::PointCloud2>(lid_topic, rclcpp::SensorDataQoS(), standard_pcl_cbk);
+            if (p_pre->lidar_type == AVIA)
+            {
+                sub_pcl_livox_ = this->create_subscription<livox_ros_driver2::msg::CustomMsg>(lid_topic, 20, livox_pcl_cbk);
+            }
+            else
+            {
+                sub_pcl_pc_ = this->create_subscription<sensor_msgs::msg::PointCloud2>(lid_topic, rclcpp::SensorDataQoS(), standard_pcl_cbk);
+            }
+            sub_imu_ = this->create_subscription<sensor_msgs::msg::Imu>(imu_topic, 10, imu_cbk);
         }
-        sub_imu_ = this->create_subscription<sensor_msgs::msg::Imu>(imu_topic, 10, imu_cbk);
         pubLaserCloudFull_ = this->create_publisher<sensor_msgs::msg::PointCloud2>("/cloud_registered", 20);
+        g_pub_cloud_registered = pubLaserCloudFull_;
         pubLaserCloudFull_body_ = this->create_publisher<sensor_msgs::msg::PointCloud2>("/cloud_registered_body", 20);
         pubLaserCloudEffect_ = this->create_publisher<sensor_msgs::msg::PointCloud2>("/cloud_effected", 20);
         pubLaserCloudMap_ = this->create_publisher<sensor_msgs::msg::PointCloud2>("/Laser_map", 20);
@@ -957,6 +1064,11 @@ public:
 private:
     void timer_callback()
     {
+        if (use_external_pose)
+        {
+            return;
+        }
+
         if(sync_packages(Measures))
         {
             if (flg_first_scan)
@@ -1138,6 +1250,8 @@ private:
     rclcpp::Subscription<sensor_msgs::msg::Imu>::SharedPtr sub_imu_;
     rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr sub_pcl_pc_;
     rclcpp::Subscription<livox_ros_driver2::msg::CustomMsg>::SharedPtr sub_pcl_livox_;
+    rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr sub_pose_odom_;
+    rclcpp::Subscription<geometry_msgs::msg::PoseStamped>::SharedPtr sub_pose_stamped_;
 
     std::unique_ptr<tf2_ros::TransformBroadcaster> tf_broadcaster_;
     rclcpp::TimerBase::SharedPtr timer_;

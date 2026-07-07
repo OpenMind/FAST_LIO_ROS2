@@ -194,6 +194,44 @@ The main structure of this UAV is 3d printed (Aluminum or PLA), the .stl file wi
 
 Thanks for LOAM(J. Zhang and S. Singh. LOAM: Lidar Odometry and Mapping in Real-time), [Livox_Mapping](https://github.com/Livox-SDK/livox_mapping), [LINS](https://github.com/ChaoqinRobotics/LINS---LiDAR-inertial-SLAM) and [Loam_Livox](https://github.com/hku-mars/loam_livox).
 
+Use:
+ros2 launch fast_lio mapping.launch.py config_file:=mid360.yaml
+
+Then, in another terminal:, will save the test.pcd
+ros2 service call /map_save std_srvs/srv/Trigger {}
 
 
+To view
 pcl_viewer test.pcd 
+
+
+========================= 
+Use Fast-Lio to build 3D Map (pcd file) usually require 
+
+/livox/lidar       # sensor_msgs/PointCloud2
+/livox/imu         # sensor_msgs/Imu
+
+However, Go2 simulation use utlidar and odom, and do not have imu (/lf/lowstate)
+Thus here we use 
+
+/utlidar/cloud_raw
+/odom
+=========================
+
+source install/setup.bash
+ros2 launch fast_lio mapping.launch.py config_file:=utlidar_external_pose.yaml
+
+To change save file name :
+utlidar_external_pose.yaml
+map_file_path:  ./utlidar_test.pcd
+
+
+To save 
+ros2 service call /map_save std_srvs/srv/Trigger {}
+
+To view
+pcl_viewer utlidar_test.pcd
+
+Downsize to view
+pcl_voxel_grid utlidar_test.pcd utlidar_test_downsampled.pcd -leaf 0.05,0.05,0.05
+pcl_viewer utlidar_test_downsampled.pcd

@@ -893,7 +893,7 @@ public:
         this->declare_parameter<bool>("publish.dense_publish_en", true);
         this->declare_parameter<bool>("publish.scan_bodyframe_pub_en", true);
         this->declare_parameter<int>("max_iteration", 4);
-        this->declare_parameter<string>("map_file_path", "");
+        this->declare_parameter<string>("map_file_path", "/tmp/fast_lio_map.pcd");
         this->declare_parameter<string>("common.lid_topic", "/livox/lidar");
         this->declare_parameter<string>("common.imu_topic", "/livox/imu");
         this->declare_parameter<bool>("common.time_sync_en", false);

@@ -21,6 +21,7 @@ def generate_launch_description():
     config_file = LaunchConfiguration('config_file')
     rviz_use = LaunchConfiguration('rviz')
     rviz_cfg = LaunchConfiguration('rviz_cfg')
+    localization = LaunchConfiguration('localization')
 
     declare_use_sim_time_cmd = DeclareLaunchArgument(
         'use_sim_time', default_value='false',
@@ -42,12 +43,17 @@ def generate_launch_description():
         'rviz_cfg', default_value=default_rviz_config_path,
         description='RViz config file path'
     )
+    declare_localization_cmd = DeclareLaunchArgument(
+        'localization', default_value='false',
+        description='Localization mode: disables point accumulation to save memory'
+    )
 
     fast_lio_node = Node(
         package='fast_lio',
         executable='fastlio_mapping',
         parameters=[PathJoinSubstitution([config_path, config_file]),
-                    {'use_sim_time': use_sim_time}],
+                    {'use_sim_time': use_sim_time,
+                     'localization_mode': localization}],
         output='screen'
     )
     rviz_node = Node(
@@ -63,6 +69,7 @@ def generate_launch_description():
     ld.add_action(decalre_config_file_cmd)
     ld.add_action(declare_rviz_cmd)
     ld.add_action(declare_rviz_config_path_cmd)
+    ld.add_action(declare_localization_cmd)
 
     ld.add_action(fast_lio_node)
     ld.add_action(rviz_node)

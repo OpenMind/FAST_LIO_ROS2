@@ -228,8 +228,17 @@ However, the Unitree Go2 simulation in Isaac Sim uses a UTLiDAR and odometry ins
 ### 7.2 Run
 
 ```bash
+source /home/wendy/Documents/GitHub/livox_ws/install/setup.bash
 source install/setup.bash
 ros2 launch fast_lio mapping.launch.py config_file:=utlidar_external_pose.yaml
+```
+
+If `install/setup.bash` prints `not found: "/tmp/livox_ws/install/local_setup.bash"`, rebuild FAST-LIO after sourcing the current Livox workspace so the chained prefix is regenerated:
+
+```bash
+source /home/wendy/Documents/GitHub/livox_ws/install/setup.bash
+cd /home/wendy/Documents/GitHub/FAST_LIO_ROS2
+colcon build --symlink-install
 ```
 
 ### 7.3 Save and View the Map
@@ -258,3 +267,14 @@ pcl_viewer utlidar_test.pcd
 pcl_voxel_grid utlidar_test.pcd utlidar_test_downsampled.pcd -leaf 0.1,0.1,0.1
 pcl_viewer utlidar_test_downsampled.pcd
 ```
+
+
+
+## MOVE ROBOT 
+
+ros2 run teleop_twist_keyboard teleop_twist_keyboard --ros-args -r cmd_vel:=/cmd_vel
+
+
+## Localization (no accumulation — memory safe):
+
+ros2 launch fast_lio mapping.launch.py config_file:=utlidar_external_pose.yaml localization:=true

@@ -75,6 +75,7 @@ double T1[MAXN], s_plot[MAXN], s_plot2[MAXN], s_plot3[MAXN], s_plot4[MAXN], s_pl
 double match_time = 0, solve_time = 0, solve_const_H_time = 0;
 int    kdtree_size_st = 0, kdtree_size_end = 0, add_point_size = 0, kdtree_delete_counter = 0;
 bool   runtime_pos_log = false, pcd_save_en = false, time_sync_en = false, extrinsic_est_en = true, path_en = true;
+bool   localization_mode = false;  // when true, skip point accumulation (pcl_wait_pub/save)
 /**************************/
 
 float res_last[100000] = {0.0};
@@ -347,8 +348,11 @@ void external_pose_pcl_cbk(const sensor_msgs::msg::PointCloud2::UniquePtr msg)
     }
 
     mtx_buffer.lock();
-    *pcl_wait_pub += *laser_cloud_world;
-    *pcl_wait_save += *laser_cloud_world;
+    if (!localization_mode)
+    {
+        *pcl_wait_pub  += *laser_cloud_world;
+        *pcl_wait_save += *laser_cloud_world;
+    }
     mtx_buffer.unlock();
 
     if (scan_pub_en && g_pub_cloud_registered)
@@ -919,6 +923,7 @@ public:
         this->declare_parameter<bool>("mapping.extrinsic_est_en", true);
         this->declare_parameter<bool>("pcd_save.pcd_save_en", false);
         this->declare_parameter<int>("pcd_save.interval", -1);
+        this->declare_parameter<bool>("localization_mode", false);
         this->declare_parameter<vector<double>>("mapping.extrinsic_T", vector<double>());
         this->declare_parameter<vector<double>>("mapping.extrinsic_R", vector<double>());
 
@@ -958,6 +963,9 @@ public:
         this->get_parameter_or<bool>("mapping.extrinsic_est_en", extrinsic_est_en, true);
         this->get_parameter_or<bool>("pcd_save.pcd_save_en", pcd_save_en, false);
         this->get_parameter_or<int>("pcd_save.interval", pcd_save_interval, -1);
+        this->get_parameter_or<bool>("localization_mode", localization_mode, false);
+        if (localization_mode)
+            RCLCPP_INFO(this->get_logger(), "[LOCALIZATION MODE] Point accumulation disabled.");
         this->get_parameter_or<vector<double>>("mapping.extrinsic_T", extrinT, vector<double>());
         this->get_parameter_or<vector<double>>("mapping.extrinsic_R", extrinR, vector<double>());
 
